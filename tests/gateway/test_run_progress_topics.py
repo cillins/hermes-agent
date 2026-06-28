@@ -122,6 +122,30 @@ class NonEditingProgressCaptureAdapter(ProgressCaptureAdapter):
         raise AssertionError("non-editable adapters should not receive edit_message calls")
 
 
+class FeishuCardProgressAdapter(ProgressCaptureAdapter):
+    def __init__(self, platform=Platform.FEISHU):
+        super().__init__(platform=platform)
+        self.card_sends = []
+        self.card_updates = []
+
+    async def send_streaming_card(self, chat_id, card, *, metadata=None):
+        self.card_sends.append(
+            {"chat_id": chat_id, "card": card, "metadata": metadata}
+        )
+        return SendResult(success=True, message_id="om_card")
+
+    async def update_streaming_card(self, chat_id, message_id, card, *, finalize=False):
+        self.card_updates.append(
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "card": card,
+                "finalize": finalize,
+            }
+        )
+        return SendResult(success=True, message_id=message_id)
+
+
 class FakeAgent:
     def __init__(self, **kwargs):
         # Capture anything passed via kwargs (older code path) but don't
@@ -711,6 +735,7 @@ async def _run_with_agent(
     chat_type="group",
     thread_id="17585",
     adapter_cls=ProgressCaptureAdapter,
+    event_message_id=None,
 ):
     if config_data:
         import yaml
@@ -756,6 +781,7 @@ async def _run_with_agent(
         source=source,
         session_id=session_id,
         session_key=session_key,
+        event_message_id=event_message_id,
     )
     return adapter, result
 
@@ -866,6 +892,34 @@ async def test_run_agent_streaming_does_not_enable_completed_interim_commentary(
 
     assert result.get("already_sent") is True
     assert not any(call["content"] == "I'll inspect the repo first." for call in adapter.sent)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_feishu_streaming_card_final_suppresses_plain_reply(monkeypatch, tmp_path):
+    adapter, result = await _run_with_agent(
+        monkeypatch,
+        tmp_path,
+        FakeAgent,
+        session_id="sess-feishu-card-final",
+        config_data={"display": {"tool_progress": "all"}},
+        platform=Platform.FEISHU,
+        chat_id="oc_chat",
+        chat_type="group",
+        thread_id="topic_17585",
+        adapter_cls=FeishuCardProgressAdapter,
+        event_message_id="om_triggering_user_message",
+    )
+
+    assert result["final_response"] == "done"
+    assert result.get("already_sent") is True
+    assert adapter.sent == []
+    assert adapter.card_sends
+    assert adapter.card_sends[0]["metadata"] == {
+        "thread_id": "topic_17585",
+        "reply_to_message_id": "om_triggering_user_message",
+    }
+    assert adapter.card_updates
+    assert adapter.card_updates[-1]["finalize"] is True
 
 
 @pytest.mark.asyncio

@@ -68,7 +68,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Literal, Optional, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 # aiohttp/websockets are independent optional deps — import outside lark_oapi
@@ -4883,6 +4883,21 @@ class FeishuAdapter(BasePlatformAdapter):
                 .build()
             )
         return SimpleNamespace(message_id=message_id, request_body=request_body)
+
+    @staticmethod
+    def _build_patch_message_content_request(message_id: str, content: str) -> Any:
+        uri = f"/open-apis/im/v1/messages/{quote(message_id, safe='')}"
+        body = {"content": content}
+        if "BaseRequest" in globals():
+            return (
+                BaseRequest.builder()
+                .http_method(HttpMethod.PATCH)
+                .uri(uri)
+                .token_types({AccessTokenType.TENANT})
+                .body(body)
+                .build()
+            )
+        return SimpleNamespace(http_method="PATCH", uri=uri, body=body)
 
     @staticmethod
     def _build_create_message_body(*, receive_id: str, msg_type: str, content: str, uuid_value: str) -> Any:

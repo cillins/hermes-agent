@@ -21,6 +21,7 @@ TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 MAX_CARD_TABLES = 5
 MAIN_CONTENT_CHUNK_CHARS = 2400
 UPDATE_MIN_INTERVAL_SECONDS = 0.5
+TERMINAL_UPDATE_RETRY_DELAYS = (1.0, 2.0, 4.0)
 SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
 
@@ -245,7 +246,18 @@ class FeishuStreamingCardConsumer:
             self.session.tokens = tokens
             self.session.context = context
             ok = await self._update_card(force=True)
-            self._final_response_sent = ok and not failed and bool(self.session.answer_text.strip())
+            terminal_accepted = (
+                self._message_id is not None
+                and not failed
+                and bool(self.session.answer_text.strip())
+            )
+            if not ok and terminal_accepted:
+                self._schedule_terminal_retry()
+            self._final_response_sent = (
+                (ok or terminal_accepted)
+                and not failed
+                and bool(self.session.answer_text.strip())
+            )
             self._final_content_delivered = self._final_response_sent
             self._queue.put_nowait(self._DONE)
 
@@ -266,6 +278,18 @@ class FeishuStreamingCardConsumer:
             self._last_update_at = time.monotonic()
             return True
         return False
+
+    def _schedule_terminal_retry(self) -> None:
+        try:
+            self.loop.create_task(self._retry_terminal_update())
+        except Exception:
+            return
+
+    async def _retry_terminal_update(self) -> None:
+        for delay in TERMINAL_UPDATE_RETRY_DELAYS:
+            await asyncio.sleep(delay)
+            if await self._update_card(force=True):
+                return
 
 
 def normalize_stream_text(text: str) -> str:
@@ -584,12 +608,11 @@ async def send_streaming_card(adapter: Any, chat_id: str, card: dict[str, Any], 
 
 
 async def update_streaming_card(adapter: Any, message_id: str, card: dict[str, Any]) -> SendResult:
-    body = adapter._build_update_message_body(
-        msg_type="interactive",
+    request = adapter._build_patch_message_content_request(
+        message_id=message_id,
         content=json.dumps(card, ensure_ascii=False),
     )
-    request = adapter._build_update_message_request(message_id=message_id, request_body=body)
-    response = await adapter._run_blocking(adapter._client.im.v1.message.update, request)
+    response = await adapter._run_blocking(adapter._client.request, request)
     result = adapter._finalize_send_result(response, "streaming card update failed")
     if result.success:
         result.message_id = message_id
