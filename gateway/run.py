@@ -15278,9 +15278,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             platform=source.platform,
             require_platform_override_for={Platform.MATTERMOST},
         )
+        _feishu_adapter = self.adapters.get(Platform.FEISHU) if source.platform == Platform.FEISHU else None
         _feishu_streaming_cards_enabled = (
             source.platform == Platform.FEISHU
             and resolve_display_setting(user_config, platform_key, "streaming_cards") is not False
+            and _feishu_adapter is not None
+            and callable(getattr(_feishu_adapter, "send_streaming_card", None))
+            and callable(getattr(_feishu_adapter, "update_streaming_card", None))
         )
         needs_progress_queue = tool_progress_enabled or _thinking_enabled
 
