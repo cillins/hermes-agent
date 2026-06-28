@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import queue
 import re
 import time
@@ -10,6 +11,8 @@ from typing import Any, Optional
 
 from gateway.platforms.base import SendResult
 
+
+logger = logging.getLogger(__name__)
 
 THINK_TAG_RE = re.compile(r"</?(?:think|thinking)>", re.IGNORECASE)
 FENCE_RE = re.compile(r"^\s*```")
@@ -280,13 +283,15 @@ class FeishuStreamingCardConsumer:
         )
         if getattr(result, "success", False):
             self._last_update_at = time.monotonic()
+            continuation_ok = True
             if self.session.status in {"completed", "failed"}:
-                await self._sync_continuation_cards(cards[1:])
-            return True
+                continuation_ok = await self._sync_continuation_cards(cards[1:])
+            return continuation_ok
         return False
 
-    async def _sync_continuation_cards(self, cards: list[dict[str, Any]]) -> None:
+    async def _sync_continuation_cards(self, cards: list[dict[str, Any]]) -> bool:
         for index, card in enumerate(cards):
+            page_number = index + 2
             if index < len(self._continuation_message_ids):
                 result = await self.adapter.update_streaming_card(
                     self.chat_id,
@@ -295,7 +300,14 @@ class FeishuStreamingCardConsumer:
                     finalize=True,
                 )
                 if not getattr(result, "success", False):
-                    return
+                    logger.warning(
+                        "[Feishu] Streaming continuation card update failed "
+                        "(page=%s message_id=%s): %s",
+                        page_number,
+                        self._continuation_message_ids[index],
+                        getattr(result, "error", None) or "unknown error",
+                    )
+                    return False
                 continue
             result = await self.adapter.send_streaming_card(
                 self.chat_id,
@@ -303,10 +315,24 @@ class FeishuStreamingCardConsumer:
                 metadata=self.metadata,
             )
             if not getattr(result, "success", False):
-                return
+                logger.warning(
+                    "[Feishu] Streaming continuation card send failed "
+                    "(page=%s): %s",
+                    page_number,
+                    getattr(result, "error", None) or "unknown error",
+                )
+                return False
             message_id = getattr(result, "message_id", None)
             if isinstance(message_id, str) and message_id:
                 self._continuation_message_ids.append(message_id)
+            else:
+                logger.warning(
+                    "[Feishu] Streaming continuation card send returned no message_id "
+                    "(page=%s)",
+                    page_number,
+                )
+                return False
+        return True
 
     def _schedule_terminal_retry(self) -> None:
         try:

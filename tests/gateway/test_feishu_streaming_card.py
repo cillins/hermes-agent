@@ -67,6 +67,22 @@ class _FlakyFinalUpdateCardAdapter(_FakeCardAdapter):
         return SimpleNamespace(success=True, message_id=message_id)
 
 
+class _FlakyContinuationCardAdapter(_FakeCardAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self._next_id = 0
+        self.continuation_failures = 0
+
+    async def send_streaming_card(self, chat_id, card, *, metadata=None):
+        title = card.get("header", {}).get("title", {}).get("content", "")
+        if "(2/" in title and self.continuation_failures == 0:
+            self.continuation_failures += 1
+            return SimpleNamespace(success=False, error="temporary continuation failure")
+        self._next_id += 1
+        self.sent.append({"chat_id": chat_id, "card": card, "metadata": metadata})
+        return SimpleNamespace(success=True, message_id=f"om_card_{self._next_id}")
+
+
 @pytest.mark.asyncio
 async def test_feishu_streaming_card_consumer_accumulates_turn_into_one_card():
     adapter = _FakeCardAdapter()
@@ -153,6 +169,29 @@ async def test_feishu_streaming_card_sends_long_final_answer_as_continuation_car
     assert "Section 0" in body_text
     assert "Section 79" in body_text
     assert "超出部分已省略" not in body_text
+
+
+@pytest.mark.asyncio
+async def test_feishu_streaming_card_retries_failed_continuation_cards(monkeypatch):
+    monkeypatch.setattr(streaming_card_module, "TERMINAL_UPDATE_RETRY_DELAYS", (0.01,))
+    adapter = _FlakyContinuationCardAdapter()
+    consumer = FeishuStreamingCardConsumer(adapter, "oc_chat", session_id="session-1")
+    long_answer = "\n\n".join(
+        f"## Section {index}\n" + ("这是一段较长的中文内容。" * 80)
+        for index in range(80)
+    )
+
+    task = asyncio.create_task(consumer.run())
+    await asyncio.sleep(0.05)
+    consumer.finish(long_answer, duration=2.0, model="gpt-test")
+    await asyncio.wait_for(task, timeout=2)
+    await asyncio.sleep(0.05)
+
+    assert adapter.continuation_failures == 1
+    continuation_cards = [call["card"] for call in adapter.sent[1:]]
+    assert continuation_cards
+    body_text = json.dumps([card["body"] for card in continuation_cards], ensure_ascii=False)
+    assert "Section 79" in body_text
 
 
 @pytest.mark.asyncio
