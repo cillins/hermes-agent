@@ -18,7 +18,12 @@ if _repo not in sys.path:
 from gateway.config import PlatformConfig
 from plugins.platforms.feishu.adapter import FeishuAdapter
 from plugins.platforms.feishu import streaming_card as streaming_card_module
-from plugins.platforms.feishu.streaming_card import FeishuStreamingCardConsumer
+from plugins.platforms.feishu.streaming_card import (
+    FEISHU_CARD_SAFE_BYTES,
+    FeishuStreamingCardConsumer,
+    _render_card_pages,
+    _card_size_bytes,
+)
 
 
 class _FakeCardAdapter:
@@ -103,6 +108,51 @@ async def test_feishu_streaming_card_consumer_accumulates_turn_into_one_card():
     assert consumer.final_response_sent is True
     assert consumer.final_content_delivered is True
     assert consumer.message_id == "om_card"
+
+
+def test_feishu_streaming_card_keeps_more_than_five_markdown_tables():
+    tables = []
+    for index in range(7):
+        tables.append(
+            f"| 项目 | 值 |\n| --- | --- |\n| table-{index} | value-{index} |"
+        )
+    session = streaming_card_module.CardSession(
+        conversation_id="session-1",
+        message_id="message-1",
+        chat_id="oc_chat",
+        status="completed",
+        answer_text="\n\n".join(tables),
+    )
+
+    cards = _render_card_pages(session)
+    body_text = json.dumps([card["body"] for card in cards], ensure_ascii=False)
+
+    assert "超出部分已省略" not in body_text
+    assert "table-0" in body_text
+    assert "table-6" in body_text
+
+
+@pytest.mark.asyncio
+async def test_feishu_streaming_card_sends_long_final_answer_as_continuation_cards():
+    adapter = _FakeCardAdapter()
+    consumer = FeishuStreamingCardConsumer(adapter, "oc_chat", session_id="session-1")
+    long_answer = "\n\n".join(
+        f"## Section {index}\n" + ("这是一段较长的中文内容。" * 80)
+        for index in range(80)
+    )
+
+    task = asyncio.create_task(consumer.run())
+    await asyncio.sleep(0.05)
+    consumer.finish(long_answer, duration=2.0, model="gpt-test")
+    await asyncio.wait_for(task, timeout=2)
+
+    final_cards = [adapter.updated[-1]["card"], *(call["card"] for call in adapter.sent[1:])]
+    assert len(final_cards) > 1
+    assert all(_card_size_bytes(card) <= FEISHU_CARD_SAFE_BYTES for card in final_cards)
+    body_text = json.dumps([card["body"] for card in final_cards], ensure_ascii=False)
+    assert "Section 0" in body_text
+    assert "Section 79" in body_text
+    assert "超出部分已省略" not in body_text
 
 
 @pytest.mark.asyncio

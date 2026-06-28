@@ -18,8 +18,10 @@ TABLE_SEPARATOR_RE = re.compile(
     re.MULTILINE,
 )
 TABLE_ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
-MAX_CARD_TABLES = 5
 MAIN_CONTENT_CHUNK_CHARS = 2400
+FEISHU_CARD_MAX_BYTES = 30_000
+FEISHU_CARD_SAFE_BYTES = FEISHU_CARD_MAX_BYTES - 2_000
+FEISHU_CARD_MAX_ELEMENTS = 200
 UPDATE_MIN_INTERVAL_SECONDS = 0.5
 TERMINAL_UPDATE_RETRY_DELAYS = (1.0, 2.0, 4.0)
 SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -116,6 +118,7 @@ class FeishuStreamingCardConsumer:
         self._started = False
         self._final_response_sent = False
         self._final_content_delivered = False
+        self._continuation_message_ids: list[str] = []
         self._created_at = time.monotonic()
 
     @property
@@ -267,7 +270,8 @@ class FeishuStreamingCardConsumer:
         now = time.monotonic()
         if not force and now - self._last_update_at < UPDATE_MIN_INTERVAL_SECONDS:
             return True
-        card = _render_card(self.session, title=self.title, footer_fields=self.footer_fields)
+        cards = _render_card_pages(self.session, title=self.title, footer_fields=self.footer_fields)
+        card = cards[0]
         result = await self.adapter.update_streaming_card(
             self.chat_id,
             self._message_id or "",
@@ -276,8 +280,33 @@ class FeishuStreamingCardConsumer:
         )
         if getattr(result, "success", False):
             self._last_update_at = time.monotonic()
+            if self.session.status in {"completed", "failed"}:
+                await self._sync_continuation_cards(cards[1:])
             return True
         return False
+
+    async def _sync_continuation_cards(self, cards: list[dict[str, Any]]) -> None:
+        for index, card in enumerate(cards):
+            if index < len(self._continuation_message_ids):
+                result = await self.adapter.update_streaming_card(
+                    self.chat_id,
+                    self._continuation_message_ids[index],
+                    card,
+                    finalize=True,
+                )
+                if not getattr(result, "success", False):
+                    return
+                continue
+            result = await self.adapter.send_streaming_card(
+                self.chat_id,
+                card,
+                metadata=self.metadata,
+            )
+            if not getattr(result, "success", False):
+                return
+            message_id = getattr(result, "message_id", None)
+            if isinstance(message_id, str) and message_id:
+                self._continuation_message_ids.append(message_id)
 
     def _schedule_terminal_retry(self) -> None:
         try:
@@ -311,11 +340,66 @@ def _render_card(
     title: str = "Hermes Agent",
     footer_fields: Optional[list[str]] = None,
 ) -> dict[str, Any]:
-    status = _render_status(session)
+    return _render_card_pages(session, title=title, footer_fields=footer_fields)[0]
+
+
+def _render_card_pages(
+    session: CardSession,
+    *,
+    title: str = "Hermes Agent",
+    footer_fields: Optional[list[str]] = None,
+) -> list[dict[str, Any]]:
     main_text = normalize_stream_text(session.visible_main_text) or (
         "正在思考..." if session.status == "thinking" else ""
     )
-    elements = _render_main_content_elements(main_text)
+    chunks = split_markdown_blocks(main_text, MAIN_CONTENT_CHUNK_CHARS)
+    pages: list[list[str]] = []
+    current: list[str] = []
+    for chunk in chunks:
+        candidate = current + [chunk]
+        card = _render_card_from_chunks(
+            session,
+            candidate,
+            title=title,
+            footer_fields=footer_fields,
+        )
+        if current and (
+            _card_size_bytes(card) > FEISHU_CARD_SAFE_BYTES
+            or len(card["body"]["elements"]) > FEISHU_CARD_MAX_ELEMENTS
+        ):
+            pages.append(current)
+            current = [chunk]
+            continue
+        current = candidate
+    if current:
+        pages.append(current)
+    if not pages:
+        pages = [[""]]
+    page_count = len(pages)
+    return [
+        _render_card_from_chunks(
+            session,
+            page,
+            title=title,
+            footer_fields=footer_fields,
+            page_index=index,
+            page_count=page_count,
+        )
+        for index, page in enumerate(pages, start=1)
+    ]
+
+
+def _render_card_from_chunks(
+    session: CardSession,
+    chunks: list[str],
+    *,
+    title: str = "Hermes Agent",
+    footer_fields: Optional[list[str]] = None,
+    page_index: int = 1,
+    page_count: int = 1,
+) -> dict[str, Any]:
+    status = _render_status(session)
+    elements = _render_main_content_elements(chunks)
     elements.extend(
         [
             {"tag": "hr", "element_id": "main_divider"},
@@ -323,17 +407,18 @@ def _render_card(
             {
                 "tag": "markdown",
                 "element_id": "footer",
-                "content": _render_footer(session, footer_fields),
+                "content": _render_footer(session, footer_fields, page_index=page_index, page_count=page_count),
                 "text_size": "x-small",
             },
         ]
     )
+    page_suffix = f" ({page_index}/{page_count})" if page_count > 1 else ""
     return {
         "schema": "2.0",
         "config": {"update_multi": True, "summary": {"content": status["subtitle"]}},
         "header": {
             "template": status["template"],
-            "title": {"tag": "plain_text", "content": title or "Hermes Agent"},
+            "title": {"tag": "plain_text", "content": f"{title or 'Hermes Agent'}{page_suffix}"},
             "subtitle": {"tag": "plain_text", "content": status["subtitle"]},
         },
         "body": {"elements": elements},
@@ -348,15 +433,10 @@ def _render_status(session: CardSession) -> dict[str, str]:
     return {"subtitle": "思考中", "template": "indigo"}
 
 
-def _render_main_content_elements(main_text: str) -> list[dict[str, Any]]:
-    table_count = len(re.findall(r"^\|[-: ]+\|", main_text, re.MULTILINE))
-    if table_count > MAX_CARD_TABLES:
-        matches = list(re.finditer(r"^\|[-: ]+\|", main_text, re.MULTILINE))
-        cutoff = matches[MAX_CARD_TABLES - 1].end()
-        main_text = main_text[:cutoff].rstrip() + "\n\n> 内容含超过 5 个表格，超出部分已省略。"
+def _render_main_content_elements(chunks: list[str]) -> list[dict[str, Any]]:
     return [
         {"tag": "markdown", "element_id": "main_content" if i == 0 else f"main_content_{i}", "content": chunk}
-        for i, chunk in enumerate(split_markdown_blocks(main_text, MAIN_CONTENT_CHUNK_CHARS))
+        for i, chunk in enumerate(chunks)
     ]
 
 
@@ -369,7 +449,13 @@ def _render_tool_summary(session: CardSession) -> str:
     return "\n".join(lines)
 
 
-def _render_footer(session: CardSession, footer_fields: Optional[list[str]]) -> str:
+def _render_footer(
+    session: CardSession,
+    footer_fields: Optional[list[str]],
+    *,
+    page_index: int = 1,
+    page_count: int = 1,
+) -> str:
     if session.status == "failed":
         return "已停止"
     if session.status != "completed":
@@ -389,7 +475,14 @@ def _render_footer(session: CardSession, footer_fields: Optional[list[str]]) -> 
         "context": f"ctx {_format_count(used_context)}/{_format_count(max_context)} {context_percent}%",
     }
     selected = [values[key] for key in fields if values.get(key)]
-    return " · ".join(selected) if selected else values["duration"]
+    footer = " · ".join(selected) if selected else values["duration"]
+    if page_count > 1:
+        footer = f"{footer} · 第 {page_index}/{page_count} 张"
+    return footer
+
+
+def _card_size_bytes(card: dict[str, Any]) -> int:
+    return len(json.dumps(card, ensure_ascii=False).encode("utf-8"))
 
 
 def split_markdown_blocks(text: str, max_block_size: int) -> list[str]:
