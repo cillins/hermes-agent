@@ -140,6 +140,16 @@ def test_write_json_non_serializable_payload_re_raises(server):
         server.write_json({"obj": object()})
 
 
+def _wait_for_json(buf: io.StringIO, *, timeout: float = 2.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = buf.getvalue()
+        if value:
+            return json.loads(value)
+        time.sleep(0.01)
+    raise AssertionError("timed out waiting for JSON-RPC response")
+
+
 def test_write_json_peer_gone_oserror_on_flush_returns_false(server):
     """A flush that raises a peer-gone OSError (EPIPE) must not strand
     the lock or crash; it returns False so the dispatcher exits cleanly."""
@@ -1666,8 +1676,9 @@ def test_dispatch_offloads_long_handlers_and_emits_via_stdout(capture):
     assert written == {"jsonrpc": "2.0", "id": "r2", "result": {"output": "hi"}}
 
 
-def test_dispatch_long_handler_does_not_block_fast_handler(server):
+def test_dispatch_long_handler_does_not_block_fast_handler(capture):
     """A slow long handler must not prevent a concurrent fast handler from completing."""
+    server, buf = capture
     released = threading.Event()
     server._methods["slash.exec"] = lambda rid, params: (released.wait(timeout=5), server._ok(rid, {"done": True}))[1]
     server._methods["fast.ping"] = lambda rid, params: server._ok(rid, {"pong": True})
@@ -1682,10 +1693,12 @@ def test_dispatch_long_handler_does_not_block_fast_handler(server):
     assert fast_elapsed < 0.5, f"fast handler blocked for {fast_elapsed:.2f}s behind slow handler"
 
     released.set()
+    assert _wait_for_json(buf)["id"] == "slow"
 
 
-def test_dispatch_session_compress_does_not_block_fast_handler(server):
+def test_dispatch_session_compress_does_not_block_fast_handler(capture):
     """Manual TUI compaction can take minutes, so it must not block the RPC loop."""
+    server, buf = capture
     released = threading.Event()
 
     def slow_compress(rid, params):
@@ -1705,6 +1718,7 @@ def test_dispatch_session_compress_does_not_block_fast_handler(server):
     assert fast_elapsed < 0.5, f"fast handler blocked for {fast_elapsed:.2f}s behind session.compress"
 
     released.set()
+    assert _wait_for_json(buf)["id"] == "slow"
 
 
 def test_dispatch_long_handler_exception_produces_error_response(capture):
@@ -1749,8 +1763,9 @@ def test_completion_handlers_are_pool_routed(completion_method, server):
 
 
 @pytest.mark.parametrize("completion_method", ["complete.path", "complete.slash"])
-def test_slow_completion_does_not_block_fast_handler(completion_method, server):
+def test_slow_completion_does_not_block_fast_handler(completion_method, capture):
     """A slow completion RPC must not block a concurrent fast handler (#21123)."""
+    server, buf = capture
     released = threading.Event()
 
     def slow_completion(rid, params):
@@ -1770,3 +1785,4 @@ def test_slow_completion_does_not_block_fast_handler(completion_method, server):
     assert fast_elapsed < 0.5, f"fast handler blocked for {fast_elapsed:.2f}s behind {completion_method}"
 
     released.set()
+    assert _wait_for_json(buf)["id"] == "slow"
