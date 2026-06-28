@@ -43,6 +43,9 @@ export const zhHant: Translations = {
     expand: "展開",
     general: "一般",
     messaging: "訊息平台",
+    gateway: "閘道",
+    gatewayHint:
+      "訊息平台、API 伺服器和 Webhook 會在「頻道」頁面設定。這些是閘道層級設定（代理/中繼模式與全域允許清單）。",
     pluginLoadFailed:
       "無法載入此外掛的指令碼。請檢查網路請求（dashboard-plugins/…）以及伺服器上的外掛路徑。",
     pluginNotRegistered:
@@ -90,6 +93,10 @@ export const zhHant: Translations = {
     statusOverview: "狀態總覽",
     system: "系統",
     webUi: "管理面板",
+    managingProfile: "正在管理設定檔",
+    currentProfileOption: "此管理面板（{name}）",
+    managingProfileBanner:
+      "正在管理設定檔「{name}」——設定、金鑰、技能、MCP、模型和新對話都會套用到該設定檔。",
   },
 
   status: {
@@ -100,6 +107,7 @@ export const zhHant: Translations = {
     activeSessions: "使用中工作階段",
     connected: "已連線",
     connectedPlatforms: "已連線平台",
+    disabled: "已停用",
     disconnected: "已中斷連線",
     error: "錯誤",
     failed: "失敗",
@@ -276,6 +284,8 @@ export const zhHant: Translations = {
       discord: "Discord",
       slack: "Slack",
       email: "Email",
+      needsHomeChannel: "請先設定主要頻道",
+      noneConfigured: "尚未設定訊息平台。請先在「頻道」中設定一個平台來傳送報告。",
     },
   },
 
@@ -286,7 +296,8 @@ export const zhHant: Translations = {
     nameRequired: "名稱為必填",
     nameRule:
       "僅允許小寫字母、數字、底線及連字號；首字必須為字母或數字；最多 64 個字元。",
-    invalidName: "設定檔名稱無效",    cloneFrom: "從設定檔複製",
+    invalidName: "設定檔名稱無效",
+    cloneFrom: "從設定檔複製",
     cloneFromNone: "無（空白）",
     allProfiles: "設定檔",
     noProfiles: "找不到設定檔。",
@@ -309,6 +320,36 @@ export const zhHant: Translations = {
     created: "已建立",
     deleted: "已刪除",
     renamed: "已重新命名",
+    activeProfile: "使用中設定檔",
+    activeBadge: "使用中",
+    setActive: "設為使用中",
+    activeSet: "已設定使用中設定檔",
+    gatewayRunning: "閘道執行中",
+    gatewayStopped: "閘道已停止",
+    gatewayRunningWarning: "此設定檔的閘道正在執行，將會先停止它。",
+    aliasBadge: "別名",
+    description: "描述",
+    descriptionPlaceholder: "這個設定檔擅長什麼？用於依角色分配看板任務。",
+    noDescription: "暫無描述",
+    editDescription: "編輯描述",
+    descriptionSaved: "描述已儲存",
+    reviewBadge: "審查",
+    autoGenerate: "自動產生",
+    generating: "產生中…",
+    describeFailed: "無法產生描述",
+    distribution: "分發",
+    advancedOptions: "進階選項",
+    cloneAll: "複製全部內容（記憶、工作階段、技能、狀態）",
+    noSkillsOption: "不預置內建技能",
+    descriptionOptional: "描述（選填）",
+    modelOptional: "模型（選填）",
+    modelInherit: "繼承複製來源 / 預設設定",
+    modelLoading: "模型載入中…",
+    modelNone: "尚無已驗證的提供者 — 請先設定金鑰",
+    editModel: "變更模型",
+    modelSaved: "模型已更新",
+    modelSelect: "選擇模型",
+    actions: "動作",
   },
 
   pluginsPage: {
@@ -370,6 +411,9 @@ export const zhHant: Translations = {
     setupNeeded: "需要設定",
     disabledForCli: "CLI 已停用",
     more: "還有 {count} 個",
+    profileSelector: "設定檔",
+    currentProfile: "目前（{name}）",
+    managingProfile: "正在管理設定檔「{name}」——開關會套用到該設定檔，而不是目前管理面板。",
   },
 
   config: {
@@ -480,6 +524,12 @@ export const zhHant: Translations = {
   theme: {
     title: "主題",
     switchTheme: "切換主題",
+    fontTitle: "字型",
+    fontDefault: "主題預設",
+    fontDefaultHint: "使用目前主題的字型",
+    fontSans: "無襯線",
+    fontSerif: "襯線",
+    fontMono: "等寬",
   },
 
   achievements: {
@@ -628,6 +678,8 @@ export const zhHant: Translations = {
     createTask: "在此欄建立任務",
     noTasks: "— 沒有任務 —",
     unassigned: "未指派",
+    needsAssignee: "需要指派負責人",
+    needsAssigneeHint: "相依項目已滿足，但排程器會跳過此任務，直到你指派一個設定檔。",
     untitled: "（無標題）",
     loadingDetail: "載入中…",
     addComment: "新增留言…（按 Enter 送出）",
@@ -732,6 +784,8 @@ export const zhHant: Translations = {
       "封存此任務？它將從預設看板檢視中消失。",
     confirmBlocked:
       "將此任務標記為已封鎖？工作者的領取將被釋放。",
+    confirmScheduled:
+      "將此任務移至「已排程」？此狀態適用於已知的時間延遲，而不是等待人工處理。",
     completionSummary:
       "{label} 的完成摘要。這將作為任務結果儲存。",
     completionSummaryRequired:

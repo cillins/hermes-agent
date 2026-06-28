@@ -43,6 +43,9 @@ export const zh: Translations = {
     expand: "展开",
     general: "通用",
     messaging: "消息平台",
+    gateway: "网关",
+    gatewayHint:
+      "消息平台、API 服务器和 Webhook 在「频道」页面配置。这些是网关级设置（代理/中继模式和全局允许列表）。",
     pluginLoadFailed:
       "无法加载此插件的脚本。请检查网络请求（dashboard-plugins/…）以及服务器上的插件路径。",
     pluginNotRegistered: "插件脚本未调用 register()，或执行出错。请打开浏览器控制台查看详情。",
@@ -89,6 +92,10 @@ export const zh: Translations = {
     statusOverview: "状态概览",
     system: "系统",
     webUi: "管理面板",
+    managingProfile: "正在管理配置",
+    currentProfileOption: "此管理面板（{name}）",
+    managingProfileBanner:
+      "正在管理配置“{name}”——配置、密钥、技能、MCP、模型和新对话都会应用到该配置。",
   },
 
   status: {
@@ -99,6 +106,7 @@ export const zh: Translations = {
     activeSessions: "活跃会话",
     connected: "已连接",
     connectedPlatforms: "已连接平台",
+    disabled: "已禁用",
     disconnected: "已断开",
     error: "错误",
     failed: "失败",
@@ -273,6 +281,8 @@ export const zh: Translations = {
       discord: "Discord",
       slack: "Slack",
       email: "邮件",
+      needsHomeChannel: "请先设置主频道",
+      noneConfigured: "尚未配置消息平台。请先在「频道」中设置一个平台来投递报告。",
     },
   },
 
@@ -283,7 +293,8 @@ export const zh: Translations = {
     nameRequired: "名称必填",
     nameRule:
       "仅允许小写字母、数字、下划线和短横线；首字符必须是字母或数字；最多 64 个字符。",
-    invalidName: "多Agent配置名称非法",    cloneFrom: "从配置文件克隆",
+    invalidName: "多Agent配置名称非法",
+    cloneFrom: "从配置文件克隆",
     cloneFromNone: "无（空白）",
     allProfiles: "多Agent配置列表",
     noProfiles: "暂无多Agent配置。",
@@ -306,6 +317,36 @@ export const zh: Translations = {
     created: "已创建",
     deleted: "已删除",
     renamed: "已重命名",
+    activeProfile: "活跃配置",
+    activeBadge: "活跃",
+    setActive: "设为活跃",
+    activeSet: "已设置活跃配置",
+    gatewayRunning: "网关运行中",
+    gatewayStopped: "网关已停止",
+    gatewayRunningWarning: "此配置的网关正在运行，将会先停止它。",
+    aliasBadge: "别名",
+    description: "描述",
+    descriptionPlaceholder: "这个配置擅长什么？用于按角色分配看板任务。",
+    noDescription: "暂无描述",
+    editDescription: "编辑描述",
+    descriptionSaved: "描述已保存",
+    reviewBadge: "评审",
+    autoGenerate: "自动生成",
+    generating: "生成中…",
+    describeFailed: "无法生成描述",
+    distribution: "分发",
+    advancedOptions: "高级选项",
+    cloneAll: "克隆全部内容（记忆、会话、技能、状态）",
+    noSkillsOption: "不预置内置技能",
+    descriptionOptional: "描述（可选）",
+    modelOptional: "模型（可选）",
+    modelInherit: "继承克隆来源 / 默认设置",
+    modelLoading: "模型加载中…",
+    modelNone: "暂无已认证的提供商 — 请先设置密钥",
+    editModel: "更改模型",
+    modelSaved: "模型已更新",
+    modelSelect: "选择模型",
+    actions: "操作",
   },
 
   pluginsPage: {
@@ -366,6 +407,9 @@ export const zh: Translations = {
     setupNeeded: "需要配置",
     disabledForCli: "CLI 已禁用",
     more: "还有 {count} 个",
+    profileSelector: "配置",
+    currentProfile: "当前（{name}）",
+    managingProfile: "正在管理配置“{name}”——开关会应用到该配置，而不是当前管理面板。",
   },
 
   config: {
@@ -475,6 +519,12 @@ export const zh: Translations = {
   theme: {
     title: "主题",
     switchTheme: "切换主题",
+    fontTitle: "字体",
+    fontDefault: "主题默认",
+    fontDefaultHint: "使用当前主题的字体",
+    fontSans: "无衬线",
+    fontSerif: "衬线",
+    fontMono: "等宽",
   },
 
   achievements: {
@@ -624,6 +674,8 @@ export const zh: Translations = {
     createTask: "在此列创建任务",
     noTasks: "— 无任务 —",
     unassigned: "未分配",
+    needsAssignee: "需要分配负责人",
+    needsAssigneeHint: "依赖已满足，但调度器会跳过此任务，直到你分配一个配置。",
     untitled: "（无标题）",
     loadingDetail: "加载中…",
     addComment: "添加评论…（按回车提交）",
@@ -728,6 +780,8 @@ export const zh: Translations = {
       "归档此任务？它将从默认看板视图中消失。",
     confirmBlocked:
       "将此任务标记为阻塞？工作者将被释放。",
+    confirmScheduled:
+      "将此任务移至「已调度」？此状态适用于已知的时间延迟，而不是等待人工处理。",
     completionSummary:
       "{label} 的完成摘要。这将作为任务结果存储。",
     completionSummaryRequired:
