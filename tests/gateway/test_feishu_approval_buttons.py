@@ -22,14 +22,22 @@ if _repo not in sys.path:
 # ---------------------------------------------------------------------------
 def _ensure_feishu_mocks():
     """Provide stubs for lark-oapi / aiohttp.web so the import succeeds."""
-    if importlib.util.find_spec("lark_oapi") is None and "lark_oapi" not in sys.modules:
+    try:
+        has_lark = importlib.util.find_spec("lark_oapi") is not None
+    except ValueError:
+        has_lark = "lark_oapi" in sys.modules
+    if not has_lark and "lark_oapi" not in sys.modules:
         mod = MagicMock()
         for name in (
             "lark_oapi", "lark_oapi.api.im.v1",
             "lark_oapi.event", "lark_oapi.event.callback_type",
         ):
             sys.modules.setdefault(name, mod)
-    if importlib.util.find_spec("aiohttp") is None and "aiohttp" not in sys.modules:
+    try:
+        has_aiohttp = importlib.util.find_spec("aiohttp") is not None
+    except ValueError:
+        has_aiohttp = "aiohttp" in sys.modules
+    if not has_aiohttp and "aiohttp" not in sys.modules:
         aio = MagicMock()
         sys.modules.setdefault("aiohttp", aio)
         sys.modules.setdefault("aiohttp.web", aio.web)

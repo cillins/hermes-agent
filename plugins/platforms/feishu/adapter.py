@@ -1924,6 +1924,45 @@ class FeishuAdapter(BasePlatformAdapter):
             logger.error("[Feishu] Failed to edit message %s: %s", message_id, exc, exc_info=True)
             return SendResult(success=False, error=str(exc))
 
+    async def send_streaming_card(
+        self,
+        chat_id: str,
+        card: Dict[str, Any],
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send the initial native streaming card for a Hermes turn."""
+        if not self._client:
+            return SendResult(success=False, error="Not connected")
+        try:
+            from plugins.platforms.feishu.streaming_card import send_streaming_card
+
+            return await send_streaming_card(self, chat_id, card, metadata)
+        except Exception as exc:
+            logger.error("[Feishu] Failed to send streaming card: %s", exc, exc_info=True)
+            return SendResult(success=False, error=str(exc))
+
+    async def update_streaming_card(
+        self,
+        chat_id: str,
+        message_id: str,
+        card: Dict[str, Any],
+        *,
+        finalize: bool = False,
+    ) -> SendResult:
+        """Update an existing native Hermes streaming card."""
+        if not self._client:
+            return SendResult(success=False, error="Not connected")
+        if not message_id:
+            return SendResult(success=False, error="Missing message_id")
+        try:
+            from plugins.platforms.feishu.streaming_card import update_streaming_card
+
+            return await update_streaming_card(self, message_id, card)
+        except Exception as exc:
+            logger.error("[Feishu] Failed to update streaming card %s: %s", message_id, exc, exc_info=True)
+            return SendResult(success=False, error=str(exc))
+
     async def send_exec_approval(
         self, chat_id: str, command: str, session_key: str,
         description: str = "dangerous command",

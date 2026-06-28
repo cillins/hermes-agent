@@ -15236,11 +15236,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             platform=source.platform,
             require_platform_override_for={Platform.MATTERMOST},
         )
+        _feishu_streaming_cards_enabled = (
+            source.platform == Platform.FEISHU
+            and resolve_display_setting(user_config, platform_key, "streaming_cards") is not False
+        )
         needs_progress_queue = tool_progress_enabled or _thinking_enabled
 
 
         # Queue for progress messages (thread-safe)
-        progress_queue = queue.Queue() if needs_progress_queue else None
+        progress_queue = queue.Queue() if needs_progress_queue and not _feishu_streaming_cards_enabled else None
+        feishu_card_consumer_holder = [None]
         last_tool = [None]  # Mutable container for tracking in closure
         last_progress_msg = [None]  # Track last message for dedup
         repeat_count = [0]  # How many times the same message repeated
@@ -15314,6 +15319,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
         def progress_callback(event_type: str, tool_name: str = None, preview: str = None, args: dict = None, **kwargs):
             """Callback invoked by agent on tool lifecycle events."""
+            _feishu_card_consumer = feishu_card_consumer_holder[0]
+            if _feishu_card_consumer is not None:
+                try:
+                    _feishu_card_consumer.on_tool_event(
+                        event_type,
+                        tool_name=tool_name,
+                        preview=preview,
+                        args=args,
+                        **kwargs,
+                    )
+                except Exception:
+                    pass
+                return
             if not progress_queue or not _run_still_current():
                 return
 
@@ -16036,73 +16054,109 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 if _plat_streaming is None
                 else bool(_plat_streaming)
             )
+            if _feishu_streaming_cards_enabled:
+                _streaming_enabled = True
             _want_stream_deltas = _streaming_enabled
-            _want_interim_messages = interim_assistant_messages_enabled
+            _want_interim_messages = interim_assistant_messages_enabled or _feishu_streaming_cards_enabled
             _want_interim_consumer = _want_interim_messages
             if _want_stream_deltas or _want_interim_consumer:
                 try:
-                    from gateway.stream_consumer import GatewayStreamConsumer, StreamConsumerConfig
                     _adapter = self.adapters.get(source.platform)
                     if _adapter:
-                        _pause_typing_before_finalize = None
-                        if source.platform == Platform.TELEGRAM and hasattr(_adapter, "pause_typing_for_chat"):
-                            def _pause_typing_before_finalize(
-                                _adapter=_adapter,
-                                _chat_id=source.chat_id,
-                            ) -> None:
-                                _adapter.pause_typing_for_chat(_chat_id)
-                        # Platforms that don't support editing sent messages
-                        # (e.g. QQ, WeChat) should skip streaming entirely —
-                        # without edit support, the consumer sends a partial
-                        # first message that can never be updated, resulting in
-                        # duplicate messages (partial + final).
-                        _adapter_supports_edit = getattr(_adapter, "SUPPORTS_MESSAGE_EDITING", True)
-                        if not _adapter_supports_edit:
-                            raise RuntimeError("skip streaming for non-editable platform")
-                        _effective_cursor = _scfg.cursor
-                        # Some Matrix clients render the streaming cursor
-                        # as a visible tofu/white-box artifact.  Keep
-                        # streaming text on Matrix, but suppress the cursor.
-                        _buffer_only = False
-                        if source.platform == Platform.MATRIX:
-                            _effective_cursor = ""
-                            _buffer_only = True
-                        # Fresh-final applies to Telegram only — other
-                        # platforms either edit in place cheaply or don't
-                        # have the edit-timestamp-stays-stale problem.
-                        # (Ported from openclaw/openclaw#72038.)
-                        _fresh_final_secs = (
-                            float(getattr(_scfg, "fresh_final_after_seconds", 0.0) or 0.0)
-                            if source.platform == Platform.TELEGRAM
-                            else 0.0
-                        )
-                        _consumer_cfg = StreamConsumerConfig(
-                            edit_interval=_scfg.edit_interval,
-                            buffer_threshold=_scfg.buffer_threshold,
-                            cursor=_effective_cursor,
-                            buffer_only=_buffer_only,
-                            fresh_final_after_seconds=_fresh_final_secs,
-                            transport=_scfg.transport or "edit",
-                            chat_type=getattr(source, "chat_type", "") or "",
-                        )
-                        _stream_consumer = GatewayStreamConsumer(
-                            adapter=_adapter,
-                            chat_id=source.chat_id,
-                            config=_consumer_cfg,
-                            metadata=_status_thread_metadata,
-                            on_new_message=(
-                                (lambda: progress_queue.put(("__reset__",)))
-                                if progress_queue is not None
-                                else None
-                            ),
-                            on_before_finalize=_pause_typing_before_finalize,
-                            initial_reply_to_id=event_message_id,
-                        )
-                        if _want_stream_deltas:
-                            def _stream_delta_cb(text: str) -> None:
-                                if _run_still_current():
-                                    _stream_consumer.on_delta(text)
-                        stream_consumer_holder[0] = _stream_consumer
+                        if _feishu_streaming_cards_enabled:
+                            from plugins.platforms.feishu.streaming_card import FeishuStreamingCardConsumer
+
+                            _stream_consumer = FeishuStreamingCardConsumer(
+                                adapter=_adapter,
+                                chat_id=source.chat_id,
+                                metadata=_status_thread_metadata,
+                                initial_reply_to_id=event_message_id,
+                                title=str(
+                                    resolve_display_setting(
+                                        user_config,
+                                        platform_key,
+                                        "streaming_card_title",
+                                    )
+                                    or "Hermes Agent"
+                                ),
+                                footer_fields=(
+                                    resolve_display_setting(
+                                        user_config,
+                                        platform_key,
+                                        "streaming_card_footer_fields",
+                                    )
+                                    or None
+                                ),
+                                loop=_loop_for_step,
+                                session_id=session_id,
+                            )
+                            feishu_card_consumer_holder[0] = _stream_consumer
+                            if _want_stream_deltas:
+                                def _stream_delta_cb(text: str) -> None:
+                                    if _run_still_current():
+                                        _stream_consumer.on_delta(text)
+                            stream_consumer_holder[0] = _stream_consumer
+                        else:
+                            from gateway.stream_consumer import GatewayStreamConsumer, StreamConsumerConfig
+                            _pause_typing_before_finalize = None
+                            if source.platform == Platform.TELEGRAM and hasattr(_adapter, "pause_typing_for_chat"):
+                                def _pause_typing_before_finalize(
+                                    _adapter=_adapter,
+                                    _chat_id=source.chat_id,
+                                ) -> None:
+                                    _adapter.pause_typing_for_chat(_chat_id)
+                            # Platforms that don't support editing sent messages
+                            # (e.g. QQ, WeChat) should skip streaming entirely —
+                            # without edit support, the consumer sends a partial
+                            # first message that can never be updated, resulting in
+                            # duplicate messages (partial + final).
+                            _adapter_supports_edit = getattr(_adapter, "SUPPORTS_MESSAGE_EDITING", True)
+                            if not _adapter_supports_edit:
+                                raise RuntimeError("skip streaming for non-editable platform")
+                            _effective_cursor = _scfg.cursor
+                            # Some Matrix clients render the streaming cursor
+                            # as a visible tofu/white-box artifact.  Keep
+                            # streaming text on Matrix, but suppress the cursor.
+                            _buffer_only = False
+                            if source.platform == Platform.MATRIX:
+                                _effective_cursor = ""
+                                _buffer_only = True
+                            # Fresh-final applies to Telegram only — other
+                            # platforms either edit in place cheaply or don't
+                            # have the edit-timestamp-stays-stale problem.
+                            # (Ported from openclaw/openclaw#72038.)
+                            _fresh_final_secs = (
+                                float(getattr(_scfg, "fresh_final_after_seconds", 0.0) or 0.0)
+                                if source.platform == Platform.TELEGRAM
+                                else 0.0
+                            )
+                            _consumer_cfg = StreamConsumerConfig(
+                                edit_interval=_scfg.edit_interval,
+                                buffer_threshold=_scfg.buffer_threshold,
+                                cursor=_effective_cursor,
+                                buffer_only=_buffer_only,
+                                fresh_final_after_seconds=_fresh_final_secs,
+                                transport=_scfg.transport or "edit",
+                                chat_type=getattr(source, "chat_type", "") or "",
+                            )
+                            _stream_consumer = GatewayStreamConsumer(
+                                adapter=_adapter,
+                                chat_id=source.chat_id,
+                                config=_consumer_cfg,
+                                metadata=_status_thread_metadata,
+                                on_new_message=(
+                                    (lambda: progress_queue.put(("__reset__",)))
+                                    if progress_queue is not None
+                                    else None
+                                ),
+                                on_before_finalize=_pause_typing_before_finalize,
+                                initial_reply_to_id=event_message_id,
+                            )
+                            if _want_stream_deltas:
+                                def _stream_delta_cb(text: str) -> None:
+                                    if _run_still_current():
+                                        _stream_consumer.on_delta(text)
+                            stream_consumer_holder[0] = _stream_consumer
                 except Exception as _sc_err:
                     logger.debug("Could not set up stream consumer: %s", _sc_err)
 
@@ -16278,7 +16332,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
 
             # Per-message state — callbacks and reasoning config change every
             # turn and must not be baked into the cached agent constructor.
-            agent.tool_progress_callback = progress_callback if tool_progress_enabled else None
+            agent.tool_progress_callback = (
+                progress_callback
+                if (tool_progress_enabled or _feishu_streaming_cards_enabled)
+                else None
+            )
             # Discord voice verbal-ack hook (fires once per turn on first tool
             # call; armed only when in a voice channel with the mixer running).
             agent.tool_start_callback = (
@@ -16774,7 +16832,9 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     _conversation_kwargs["moa_config"] = moa_config
                 if _persist_user_timestamp_override is not None:
                     _conversation_kwargs["persist_user_timestamp"] = _persist_user_timestamp_override
+                _agent_run_started_at = time.time()
                 result = agent.run_conversation(_api_run_message, **_conversation_kwargs)
+                _agent_run_duration = time.time() - _agent_run_started_at
             finally:
                 unregister_gateway_notify(_approval_session_key)
                 # Cancel any pending clarify entries so blocked agent
@@ -16788,8 +16848,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 reset_current_session_key(_approval_session_token)
             result_holder[0] = result
 
-            # Signal the stream consumer that the agent is done
-            if _stream_consumer is not None:
+            # Signal the stream consumer that the agent is done. Feishu cards
+            # are finalized below after token/model stats are collected.
+            if _stream_consumer is not None and not getattr(
+                _stream_consumer,
+                "is_feishu_streaming_card",
+                False,
+            ):
                 _stream_consumer.finish()
             
             # Return final response, or a message if something went wrong
@@ -16807,6 +16872,28 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 _output_toks = getattr(_agent, "session_completion_tokens", 0)
                 _context_length = getattr(_agent.context_compressor, "context_length", 0) or 0
             _resolved_model = getattr(_agent, "model", None) if _agent else None
+            if _stream_consumer is not None and getattr(
+                _stream_consumer,
+                "is_feishu_streaming_card",
+                False,
+            ):
+                try:
+                    _stream_consumer.finish(
+                        final_response,
+                        failed=bool(result.get("failed")),
+                        duration=locals().get("_agent_run_duration", 0.0),
+                        model=_resolved_model,
+                        tokens={
+                            "input_tokens": _input_toks,
+                            "output_tokens": _output_toks,
+                        },
+                        context={
+                            "used_tokens": _last_prompt_toks,
+                            "max_tokens": _context_length,
+                        },
+                    )
+                except Exception:
+                    pass
 
             # Sync session_id immediately after run_conversation(). Compression
             # can rotate before a follow-up model call fails; the failure return
